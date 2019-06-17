@@ -3,15 +3,16 @@
 #include "StringSplitter.h"
 #include "DS3231.h"
 
+const int FAN_PIN = 12;
+const int ADJ_PIN = A0;
 const float MIN_BRIGHTNESS = 0.0;
-const float MAX_BRIGHTNESS = 1.0;
+const float MAX_BRIGHTNESS = 0.8;
 const float GAMMA = 2.2;
-const float T_SUNRISE = 7.5;
-const float T_SUNSET = 18.5;
-const float FADE_TIME = 2.0;
+const float T_SUNRISE = 10.5;
+const float T_SUNSET = 19.5;
+const float FADE_TIME = 4.0;
 String serialBuffer = "";
-volatile float lightLevel = 0;
-volatile int lightDirection = 0;
+float setMaxBrightness = 0;
 
 struct ts timeStruct;
 float sunriseFadeStartTime;
@@ -19,22 +20,21 @@ float sunriseFadeEndTime;
 float sunsetFadeStartTime;
 float sunsetFadeEndTime;
 
-//Function Prototypes
-void initPWM();
-void setPWM(float value);
-void serialLoop();
-
 void setup()
 {
   Serial.begin(9600);
-  Wire.begin();
-  DS3231_init(DS3231_CONTROL_INTCN);
+  Serial.println("Initialising ...");
+  initI2C();
+  Serial.println("I2C initialised.");
   initPWM();
-  sunriseFadeStartTime = T_SUNRISE - FADE_TIME/2;
-  sunriseFadeEndTime = T_SUNRISE + FADE_TIME/2;
-  sunsetFadeStartTime = T_SUNSET - FADE_TIME/2;
-  sunsetFadeEndTime = T_SUNSET + FADE_TIME/2;
-  Serial.println("Started");
+  Serial.println("PWM initialised.");
+  initFan();
+  Serial.println("Fan initialised.");
+  initAdjust();
+  DS3231_init(DS3231_CONTROL_INTCN);
+  Serial.println("DS3231 initialised.");
+  initValues();
+  Serial.println("Calculations done.");
 }
 
 void loop()
@@ -42,6 +42,13 @@ void loop()
   serialLoop();
   timeLoop();
   lightingLoop();
+}
+
+void initI2C()
+{
+  pinMode(SDA, INPUT);
+  pinMode(SCL, INPUT);
+  Wire.begin();
 }
 
 void initPWM()
@@ -54,6 +61,25 @@ void initPWM()
   ICR1 = 4096;                         /* TOP counter value (freeing OCR1A*/
 }
 
+void initFan()
+{
+  pinMode(FAN_PIN, OUTPUT);
+  digitalWrite(FAN_PIN, LOW);
+}
+
+void initAdjust()
+{
+  pinMode(ADJ_PIN, OUTPUT);
+}
+
+void initValues()
+{
+  sunriseFadeStartTime = T_SUNRISE - FADE_TIME/2;
+  sunriseFadeEndTime = T_SUNRISE + FADE_TIME/2;
+  sunsetFadeStartTime = T_SUNSET - FADE_TIME/2;
+  sunsetFadeEndTime = T_SUNSET + FADE_TIME/2;
+}
+
 void setPWM(float value)
 {
   float range = MAX_BRIGHTNESS - MIN_BRIGHTNESS;
@@ -61,6 +87,24 @@ void setPWM(float value)
   float correctedValue = pow(boundedValue, GAMMA);
   uint16_t intValue = round(correctedValue * 4095);
   OCR1A = intValue;
+}
+
+void setFan(float value)
+{
+  if(value > 0)
+  {
+    digitalWrite(FAN_PIN, HIGH);
+  }
+  else
+  {
+    digitalWrite(FAN_PIN, LOW);
+  }
+}
+
+void readAdjustment()
+{
+  int rawValue = analogRead(ADJ_PIN);
+  setMaxBrightness = ((float)rawValue)/((float)1023);
 }
 
 void serialLoop()
@@ -90,7 +134,10 @@ void timeLoop()
 void lightingLoop()
 {
   float currentHour = timeToHourFraction(timeStruct);
-  setPWM(calculateLighting(currentHour));  
+  float lightingValue = calculateLighting(currentHour);
+  readAdjustment();
+  setPWM(lightingValue);
+  setFan(lightingValue);
 }
 
 float calculateLighting(float currentHour)
@@ -126,21 +173,48 @@ void processSerialInput(String input)
   if(input.startsWith("Timeset:"))
   {
     struct ts timeSet;
-    StringSplitter *splitter = new StringSplitter(input, ':', 7);
-    timeSet.year = (splitter->getItemAtIndex(1)).toInt();
-    timeSet.mon = (splitter->getItemAtIndex(2)).toInt();
-    timeSet.mday = (splitter->getItemAtIndex(3)).toInt();
-    timeSet.hour = (splitter->getItemAtIndex(4)).toInt();
-    timeSet.min = (splitter->getItemAtIndex(5)).toInt();
-    timeSet.sec = (splitter->getItemAtIndex(6)).toInt();
+//    Serial.println(input);
+//    StringSplitter *splitter = new StringSplitter(input, ':', 7);
+//    timeSet.year = (splitter->getItemAtIndex(1)).toInt();
+//    timeSet.mon = (splitter->getItemAtIndex(2)).toInt();
+//    timeSet.mday = (splitter->getItemAtIndex(3)).toInt();
+//    timeSet.hour = (splitter->getItemAtIndex(4)).toInt();
+//    timeSet.min = (splitter->getItemAtIndex(5)).toInt();
+//    timeSet.sec = (splitter->getItemAtIndex(6)).toInt();
+
+    timeSet.year = 2019;
+    timeSet.mon = 6;
+    timeSet.mday = 17;
+    timeSet.hour = 12;
+    timeSet.min = 39;
+    timeSet.sec = 00;
+    
     DS3231_set(timeSet);
     Serial.println("Time set complete.");
+  }
+  else if(input.startsWith("Timeget"))
+  {
+    Serial.print(timeStruct.year);
+    Serial.print("-");
+    Serial.print(timeStruct.mon);
+    Serial.print("-");
+    Serial.print(timeStruct.mday);
+    Serial.print(" ");
+    Serial.print(timeStruct.hour);
+    Serial.print(":");
+    Serial.print(timeStruct.min);
+    Serial.print(":");
+    Serial.println(timeStruct.sec);
   }
   else if(input.startsWith("Light"))
   {
     float currentHour = timeToHourFraction(timeStruct);  
     Serial.print("Current lighting: ");
     Serial.println(calculateLighting(currentHour));
+  }
+  else
+  {
+    Serial.println("Unrecognised command");
   }
 }
 
