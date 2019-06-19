@@ -5,14 +5,15 @@
 
 const int FAN_PIN = 12;
 const int ADJ_PIN = A0;
+const int OVR_PIN = 13;
 const float MIN_BRIGHTNESS = 0.0;
-const float MAX_BRIGHTNESS = 0.8;
 const float GAMMA = 2.2;
 const float T_SUNRISE = 10.5;
 const float T_SUNSET = 19.5;
 const float FADE_TIME = 4.0;
 String serialBuffer = "";
-float setMaxBrightness = 0;
+volatile float setMaxBrightness = 0;
+volatile int overrideSwitch = 0;
 
 struct ts timeStruct;
 float sunriseFadeStartTime;
@@ -69,7 +70,9 @@ void initFan()
 
 void initAdjust()
 {
-  pinMode(ADJ_PIN, OUTPUT);
+  pinMode(ADJ_PIN, INPUT);
+  pinMode(OVR_PIN, INPUT);
+  digitalWrite(OVR_PIN, LOW);
 }
 
 void initValues()
@@ -82,7 +85,7 @@ void initValues()
 
 void setPWM(float value)
 {
-  float range = MAX_BRIGHTNESS - MIN_BRIGHTNESS;
+  float range = setMaxBrightness - MIN_BRIGHTNESS;
   float boundedValue = MIN_BRIGHTNESS + (range * value);
   float correctedValue = pow(boundedValue, GAMMA);
   uint16_t intValue = round(correctedValue * 4095);
@@ -105,6 +108,7 @@ void readAdjustment()
 {
   int rawValue = analogRead(ADJ_PIN);
   setMaxBrightness = ((float)rawValue)/((float)1023);
+  overrideSwitch = digitalRead(OVR_PIN);
 }
 
 void serialLoop()
@@ -142,27 +146,34 @@ void lightingLoop()
 
 float calculateLighting(float currentHour)
 {
-  if(currentHour < sunriseFadeStartTime)
+  if(overrideSwitch == 0)
   {
-    return 0.0;
-  }
-  else if(currentHour >= sunriseFadeStartTime && currentHour < sunriseFadeEndTime)
-  {
-    float progress = (currentHour - sunriseFadeStartTime)/FADE_TIME;
-    return (progress);
-  }
-  else if(currentHour >= sunriseFadeEndTime && currentHour < sunsetFadeStartTime)
-  {
-    return 1.0;
-  }
-  else if(currentHour >= sunsetFadeStartTime && currentHour < sunsetFadeEndTime)
-  {
-    float progress = (currentHour - sunsetFadeStartTime)/FADE_TIME;
-    return (1.0 - progress);
+    if(currentHour < sunriseFadeStartTime)
+    {
+      return 0.0;
+    }
+    else if(currentHour >= sunriseFadeStartTime && currentHour < sunriseFadeEndTime)
+    {
+      float progress = (currentHour - sunriseFadeStartTime)/FADE_TIME;
+      return (progress);
+    }
+    else if(currentHour >= sunriseFadeEndTime && currentHour < sunsetFadeStartTime)
+    {
+      return 1.0;
+    }
+    else if(currentHour >= sunsetFadeStartTime && currentHour < sunsetFadeEndTime)
+    {
+      float progress = (currentHour - sunsetFadeStartTime)/FADE_TIME;
+      return (1.0 - progress);
+    }
+    else
+    {
+      return 0.0;
+    }
   }
   else
   {
-    return 0.0;
+    return 1.0;
   }
 }
 
